@@ -1,0 +1,157 @@
+use std::fs::File;
+use std::io::{self, BufRead};
+use std::path::Path;
+use reqwest;
+use petgraph::prelude::{Graph, NodeIndex};
+use petgraph::algo::connected_components;
+use petgraph::visit::EdgeRef;
+use plotters::prelude::*;
+
+fn download_dataset(url: &str) -> Result<String, reqwest::Error> {
+    let response = reqwest::blocking::get(url)?;
+    let content = response.text()?;
+    Ok(content)
+}
+
+fn load_dataset_from_file(file_path: &str) -> Result<Vec<(String, String, String)>, io::Error> {
+    let file = File::open(file_path)?;
+    let reader = io::BufReader::new(file);
+
+    let mut dataset = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() >= 3 {
+            let user_id = fields[0].to_string();
+            let product_id = fields[1].to_string();
+            let review_text = fields[2].to_string();
+            dataset.push((user_id, product_id, review_text));
+        }
+    }
+
+    Ok(dataset)
+}
+
+fn preprocess_data(data: Vec<(String, String, String)>) -> Vec<(String, String)> {
+    let product_pairs: Vec<(String, String)> = data.into_iter().map(|(user_id, product_id, _)| (user_id, product_id)).collect();
+    product_pairs
+}
+
+fn create_graph(data: Vec<(String, String)>) -> Graph<String, ()> {
+    let mut graph = Graph::new();
+
+    for (product1, product2) in data {
+        let node1 = graph.add_node(product1.clone());
+        let node2 = graph.add_node(product2.clone());
+        graph.add_edge(node1, node2, ());
+    }
+
+    graph
+}
+
+fn find_connected_components(graph: &Graph<String, ()>) -> Vec<Vec<NodeIndex>> {
+    connected_components(graph)
+}
+
+fn count_product_pairs(graph: &Graph<String, ()>) -> Vec<((String, String), usize)> {
+    let mut counts = std::collections::HashMap::new();
+
+    for edge in graph.edge_references() {
+        let source = &graph[edge.source()];
+        let target = &graph[edge.target()];
+
+        let pair = if source < target {
+            (source.clone(), target.clone())
+        } else {
+            (target.clone(), source.clone())
+        };
+
+        *counts.entry(pair).or_insert(0) += 1;
+    }
+
+    counts.into_iter().collect()
+}
+
+fn identify_popular_pairs(counts: Vec<((String, String), usize)>, threshold: usize) -> Vec<((String, String), usize)> {
+    counts.into_iter().filter(|&(_, count)| count >= threshold).collect()
+}
+
+fn create_bar_chart(popular_pairs: &[(String, String)], frequencies: &[usize]) {
+    // Implementation of creating a bar chart using the plotters crate
+    // Add code to create a bar chart with the popular pairs and their frequencies
+    let root = BitMapBackend::new("bar_chart.png", (1024, 768)).into_drawing_area();
+    root.fill(&WHITE).unwrap();
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Popular Product Pairs", ("sans-serif", 30))
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(40)
+        .build_cartesian_2d(0u32..10u32, 0u32..50u32)
+        .unwrap();
+
+    chart.configure_mesh().draw().unwrap();
+
+    for (i, pair) in popular_pairs.iter().enumerate() {
+        let frequency = frequencies[i] as i32;
+        chart.draw_series(
+            BarChart::new(vec![(i as i32, frequency)], 0)
+                .label(pair.0.as_str())
+                .style(GREEN.filled())
+        ).unwrap();
+    }
+}
+
+fn generate_report(popular_pairs: &[(String, String)], frequencies: &[usize]) {
+    // Implementation of generating a report based on the analysis
+    // You can print or save the results to a file, or any other desired output
+    println!("=== Popular Product Pairs Report ===");
+    for (i, pair) in popular_pairs.iter().enumerate() {
+        println!("{}. Product Pair: {}, Frequency: {}", i + 1, pair.0, frequencies[i]);
+    }
+}
+
+fn main() {
+    // Example usage of the functions
+
+    // Download dataset from a URL
+    let url = "https://example.com/dataset.txt";
+    match download_dataset(url) {
+        Ok(content) => {
+            // Load dataset from file
+            if let Ok(dataset) = load_dataset_from_file("dataset.txt") {
+                // Preprocess data
+                let product_pairs = preprocess_data(dataset);
+
+                // Create a graph
+                let graph = create_graph(product_pairs.clone());
+
+                // Find connected components
+                let connected_components = find_connected_components(&graph);
+
+                // Count product pairs
+                let counts = count_product_pairs(&graph);
+
+                // Identify popular pairs
+                let threshold = 3;
+                let popular_pairs = identify_popular_pairs(counts, threshold);
+
+                // Create and display a bar chart
+                create_bar_chart(
+                    &popular_pairs.iter().map(|(pair, _)| pair.clone()).collect::<Vec<_>>(),
+                    &popular_pairs.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
+                );
+
+                // Generate a report
+                generate_report(
+                    &popular_pairs.iter().map(|(pair, _)| pair.clone()).collect::<Vec<_>>(),
+                    &popular_pairs.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
+                );
+            } else {
+                println!("Error loading dataset from file.");
+            }
+        }
+        Err(err) => {
+            println!("Error downloading dataset: {:?}", err);
+        }
+    }
+}
